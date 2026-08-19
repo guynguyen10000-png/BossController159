@@ -2,7 +2,6 @@ package bosscontroller;
 
 import arc.Core;
 import arc.Events;
-import arc.graphics.g2d.TextureRegion;
 import arc.scene.ui.Dialog;
 import arc.scene.ui.TextButton;
 import arc.scene.ui.layout.Table;
@@ -20,12 +19,15 @@ import mindustry.type.UnitType;
 
 public class BossController extends Mod {
 
+    /*
+     * Boss mặc định.
+     */
     private static UnitType selectedBoss = UnitTypes.reign;
 
     /*
-     * Các boss có sẵn trong GUI.
+     * Danh sách boss xuất hiện trong GUI.
      *
-     * Bạn có thể thêm UnitTypes khác vào đây.
+     * Có thể thêm UnitTypes khác vào đây.
      */
     private static final UnitType[] BOSS_LIST = {
         UnitTypes.scepter,
@@ -37,25 +39,26 @@ public class BossController extends Mod {
     };
 
     /*
-     * Lưu buildSpeed/buildRange gốc để không thay đổi
-     * vĩnh viễn UnitType nếu không cần.
+     * Dùng để tránh gọi becomeBoss() nhiều lần
+     * trong cùng một lần load map.
      */
-    private static final arc.struct.ObjectMap<UnitType, Float> oldBuildSpeed =
-        new arc.struct.ObjectMap<>();
+    private static boolean changingUnit = false;
 
-    private static final arc.struct.ObjectMap<UnitType, Float> oldBuildRange =
-        new arc.struct.ObjectMap<>();
+    /*
+     * ==========================================
+     * CONSTRUCTOR
+     * ==========================================
+     */
 
     public BossController() {
 
         /*
-         * Chạy khi client đã load xong.
+         * Client đã load xong.
+         *
+         * Thêm nút Boss Controller vào menu chính.
          */
         Events.on(ClientLoadEvent.class, event -> {
 
-            /*
-             * Nút xuất hiện ngay ở màn hình chính.
-             */
             Vars.ui.menufrag.addButton(
                 "Boss Controller",
                 Icon.units,
@@ -68,13 +71,12 @@ public class BossController extends Mod {
          */
         Events.on(WorldLoadEvent.class, event -> {
 
+            changingUnit = false;
+
             /*
-             * Chờ một chút để player/unit được tạo hoàn chỉnh.
+             * Chờ player/unit được tạo hoàn chỉnh.
              */
             Timer.schedule(() -> {
-
-                if (Vars.player == null) return;
-                if (Vars.player.dead()) return;
 
                 becomeBoss();
 
@@ -83,9 +85,9 @@ public class BossController extends Mod {
     }
 
     /*
-     * =========================
-     * GUI CHỌN BOSS
-     * =========================
+     * ==========================================
+     * GUI
+     * ==========================================
      */
 
     private static void showBossMenu() {
@@ -105,7 +107,7 @@ public class BossController extends Mod {
 
             table.add(
                 "Boss hiện tại: [accent]"
-                    + selectedBoss.localizedName
+                    + getBossName(selectedBoss)
                     + "[/accent]"
             ).row();
 
@@ -115,6 +117,9 @@ public class BossController extends Mod {
 
             table.add().height(10f).row();
 
+            /*
+             * Tạo nút cho từng boss.
+             */
             for (UnitType type : BOSS_LIST) {
 
                 if (type == null) continue;
@@ -125,10 +130,14 @@ public class BossController extends Mod {
 
                         selectedBoss = type;
 
-                        Core.app.post(() -> {
-                            dialog.hide();
-                        });
+                        /*
+                         * Đóng GUI.
+                         */
+                        Core.app.post(dialog::hide);
 
+                        /*
+                         * Thông báo lựa chọn.
+                         */
                         Vars.ui.showInfoToast(
                             "Đã chọn: "
                                 + type.localizedName,
@@ -138,6 +147,8 @@ public class BossController extends Mod {
                 ).get();
 
                 button.getLabel().setFontScale(1f);
+
+                table.row();
             }
 
         }).grow();
@@ -151,78 +162,101 @@ public class BossController extends Mod {
     }
 
     /*
-     * =========================
-     * BIẾN PLAYER THÀNH BOSS
-     * =========================
+     * ==========================================
+     * ĐỔI PLAYER THÀNH BOSS
+     * ==========================================
      */
 
     private static void becomeBoss() {
 
+        /*
+         * Không có player thì thử lại.
+         */
+        if (Vars.player == null) {
+            retryBecomeBoss();
+            return;
+        }
+
+        /*
+         * Player chưa có unit.
+         */
+        Unit oldUnit = Vars.player.unit();
+
+        if (oldUnit == null) {
+            retryBecomeBoss();
+            return;
+        }
+
+        /*
+         * Nếu đang trong quá trình đổi unit,
+         * không thực hiện lần nữa.
+         */
+        if (changingUnit) {
+            return;
+        }
+
+        /*
+         * Boss mặc định.
+         */
         if (selectedBoss == null) {
             selectedBoss = UnitTypes.reign;
         }
 
-        if (Vars.player == null) return;
-
-        Unit oldUnit = Vars.player.unit();
-
-        if (oldUnit == null) {
-            /*
-             * Player chưa có unit.
-             * Thử lại sau.
-             */
-            Timer.schedule(
-                BossController::becomeBoss,
-                0.5f
-            );
-
-            return;
-        }
-
         /*
-         * Không tạo lại nếu player đã là boss.
+         * Đã là boss được chọn rồi.
          */
         if (oldUnit.type == selectedBoss) {
-            enableBuilding(selectedBoss);
+
+            prepareBoss(selectedBoss);
+
             return;
         }
+
+        changingUnit = true;
+
+        /*
+         * Lưu thông tin unit cũ.
+         */
+        float x = oldUnit.x;
+        float y = oldUnit.y;
+        float rotation = oldUnit.rotation;
 
         Team team = Vars.player.team();
 
         /*
-         * Tạo boss cùng team với player.
+         * Tạo unit boss.
+         *
+         * UnitType.create(Team) là API của UnitType.
          */
         Unit boss = selectedBoss.create(team);
 
-        if (boss == null) return;
+        if (boss == null) {
+            changingUnit = false;
+            return;
+        }
 
         /*
-         * Cho boss khả năng xây.
+         * Cho boss kế thừa vị trí.
          */
-        enableBuilding(selectedBoss);
+        boss.set(x, y);
+
+        boss.rotation = rotation;
 
         /*
-         * Đặt boss đúng vị trí player cũ.
+         * Chuẩn bị khả năng xây.
          */
-        boss.set(
-            oldUnit.x,
-            oldUnit.y
-        );
-
-        boss.rotation = oldUnit.rotation;
+        prepareBoss(selectedBoss);
 
         /*
-         * Thêm vào world.
+         * Thêm boss vào world.
          */
         boss.add();
 
         /*
-         * Gán player vào unit mới.
+         * Gán boss cho player.
          *
-         * UnitType.create(Team) sẽ tạo controller
-         * theo UnitType. Vì đây là unit của player,
-         * player controller sẽ được dùng khi player
-         * nhận unit này.
+         * Đây là phần quan trọng nhất:
+         * player sẽ điều khiển unit mới.
          */
         Vars.player.unit(boss);
 
@@ -233,6 +267,11 @@ public class BossController extends Mod {
             oldUnit.remove();
         }
 
+        changingUnit = false;
+
+        /*
+         * Thông báo.
+         */
         Vars.ui.showInfoToast(
             "Bạn đang điều khiển: "
                 + selectedBoss.localizedName,
@@ -241,51 +280,80 @@ public class BossController extends Mod {
     }
 
     /*
-     * =========================
-     * CHO BOSS XÂY
-     * =========================
+     * ==========================================
+     * RETRY
+     * ==========================================
      */
 
-    private static void enableBuilding(UnitType type) {
+    private static void retryBecomeBoss() {
+
+        Timer.schedule(() -> {
+
+            if (Vars.player == null) {
+                retryBecomeBoss();
+                return;
+            }
+
+            if (Vars.player.unit() == null) {
+                retryBecomeBoss();
+                return;
+            }
+
+            becomeBoss();
+
+        }, 0.5f);
+    }
+
+    /*
+     * ==========================================
+     * CHUẨN BỊ BOSS XÂY DỰNG
+     * ==========================================
+     */
+
+    private static void prepareBoss(UnitType type) {
 
         if (type == null) return;
 
         /*
-         * Lưu giá trị gốc lần đầu tiên.
+         * Một số boss vốn đã có buildSpeed.
+         *
+         * Với những UnitType không xây được,
+         * đặt buildSpeed > 0 để mở khả năng xây.
          */
-        if (!oldBuildSpeed.containsKey(type)) {
-            oldBuildSpeed.put(
-                type,
-                type.buildSpeed
-            );
-        }
-
-        if (!oldBuildRange.containsKey(type)) {
-            oldBuildRange.put(
-                type,
-                type.buildRange
-            );
+        if (type.buildSpeed <= 0f) {
+            type.buildSpeed = 1f;
         }
 
         /*
-         * Trong Mindustry 159.7:
-         *
-         * buildSpeed < 0 = không thể xây.
-         *
-         * buildSpeed >= 0 = có thể xây.
+         * Một số boss có buildRange quá nhỏ
+         * hoặc không có khoảng cách xây.
          */
-        type.buildSpeed = 1f;
-
-        /*
-         * Tăng khoảng cách xây.
-         */
-        type.buildRange = 80f;
+        if (type.buildRange <= 0f) {
+            type.buildRange = 80f;
+        }
     }
 
     /*
-     * Cho phép lấy boss hiện tại từ code khác
-     * nếu sau này muốn thêm tính năng.
+     * ==========================================
+     * TÊN BOSS
+     * ==========================================
      */
+
+    private static String getBossName(UnitType type) {
+
+        if (type == null) {
+            return "Reign";
+        }
+
+        return type.localizedName;
+    }
+
+    /*
+     * ==========================================
+     * GETTER
+     * ==========================================
+     */
+
     public static UnitType selectedBoss() {
         return selectedBoss;
     }
