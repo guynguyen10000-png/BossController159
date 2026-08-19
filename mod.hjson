@@ -1,8 +1,10 @@
-name: "boss-controller"
-displayName: "Boss Controller"
-author: "YourName"
-description: "Choose a boss and control it when entering a map."
-version: "1.0"
-minGameVersion: "159.7"
-main: "bosscontroller.BossController"
-java: true
+{
+    "name": "boss-controller",
+    "displayName": "Boss Controller",
+    "author": "YourName",
+    "description": "Choose a boss before entering a map and play as that boss with building enabled.",
+    "version": "1.0",
+    "minGameVersion": "159.7",
+    "main": "bosscontroller.BossController",
+    "java": true
+}
